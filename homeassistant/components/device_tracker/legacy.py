@@ -197,7 +197,6 @@ class DeviceTracker:
             self.track_new,
             dev_id,
             mac,
-            (host_name or dev_id).replace("_", " "),
             picture=picture,
             icon=icon,
             hide_if_away=self.defaults.get(CONF_AWAY_HIDE, DEFAULT_AWAY_HIDE),
@@ -342,7 +341,7 @@ class Device(RestoreEntity):
     @property
     def name(self):
         """Return the name of the entity."""
-        return self.config_name or self.host_name or DEVICE_DEFAULT_NAME
+        return self.config_name or self.host_name or self.dev_id or DEVICE_DEFAULT_NAME
 
     @property
     def state(self):
@@ -393,7 +392,7 @@ class Device(RestoreEntity):
         """Mark the device as seen."""
         self.source_type = source_type
         self.last_seen = dt_util.utcnow()
-        self.host_name = host_name
+        self.host_name = host_name or self.host_name
         self.location_name = location_name
         self.consider_home = consider_home or self.consider_home
 
@@ -491,34 +490,25 @@ class DeviceScanner:
         """Scan for devices."""
         raise NotImplementedError()
 
-    def async_scan_devices(self) -> Any:
-        """Scan for devices.
-
-        This method must be run in the event loop and returns a coroutine.
-        """
-        return self.hass.async_add_job(self.scan_devices)
+    async def async_scan_devices(self) -> Any:
+        """Scan for devices."""
+        return await self.hass.async_add_job(self.scan_devices)
 
     def get_device_name(self, device: str) -> str:
         """Get the name of a device."""
         raise NotImplementedError()
 
-    def async_get_device_name(self, device: str) -> Any:
-        """Get the name of a device.
-
-        This method must be run in the event loop and returns a coroutine.
-        """
-        return self.hass.async_add_job(self.get_device_name, device)
+    async def async_get_device_name(self, device: str) -> Any:
+        """Get the name of a device."""
+        return await self.hass.async_add_job(self.get_device_name, device)
 
     def get_extra_attributes(self, device: str) -> dict:
         """Get the extra attributes of a device."""
         raise NotImplementedError()
 
-    def async_get_extra_attributes(self, device: str) -> Any:
-        """Get the extra attributes of a device.
-
-        This method must be run in the event loop and returns a coroutine.
-        """
-        return self.hass.async_add_job(self.get_extra_attributes, device)
+    async def async_get_extra_attributes(self, device: str) -> Any:
+        """Get the extra attributes of a device."""
+        return await self.hass.async_add_job(self.get_extra_attributes, device)
 
 
 async def async_load_config(

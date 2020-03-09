@@ -48,7 +48,6 @@ class TestComponentLogbook(unittest.TestCase):
         self.hass = get_test_home_assistant()
         init_recorder_component(self.hass)  # Force an in memory DB
         assert setup_component(self.hass, logbook.DOMAIN, self.EMPTY_CONFIG)
-        self.hass.start()
 
     def tearDown(self):
         """Stop everything that was started."""
@@ -90,7 +89,7 @@ class TestComponentLogbook(unittest.TestCase):
                 dt_util.utcnow() + timedelta(hours=1),
             )
         )
-        assert len(events) == 2
+        assert len(events) == 1
 
         assert 1 == len(calls)
         last_call = calls[-1]
@@ -1485,3 +1484,36 @@ async def test_humanify_script_started_event(hass):
     assert event2["domain"] == "script"
     assert event2["message"] == "started"
     assert event2["entity_id"] == "script.bye"
+
+
+async def test_humanify_same_state(hass):
+    """Test humanifying Script Run event."""
+    state_50 = ha.State("light.kitchen", "on", {"brightness": 50}).as_dict()
+    state_100 = ha.State("light.kitchen", "on", {"brightness": 100}).as_dict()
+    state_200 = ha.State("light.kitchen", "on", {"brightness": 200}).as_dict()
+
+    events = list(
+        logbook.humanify(
+            hass,
+            [
+                ha.Event(
+                    EVENT_STATE_CHANGED,
+                    {
+                        "entity_id": "light.kitchen",
+                        "old_state": state_50,
+                        "new_state": state_100,
+                    },
+                ),
+                ha.Event(
+                    EVENT_STATE_CHANGED,
+                    {
+                        "entity_id": "light.kitchen",
+                        "old_state": state_100,
+                        "new_state": state_200,
+                    },
+                ),
+            ],
+        )
+    )
+
+    assert len(events) == 1
