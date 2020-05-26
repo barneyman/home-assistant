@@ -1,3 +1,6 @@
 [submodule "config"]
 	path = config
 	url = https://github.com/barneyman/hassio_beach.git
+[submodule "config.apartment"]
+	path = config.apartment
+	url = https://github.com/barneyman/hassio_apartment.git
