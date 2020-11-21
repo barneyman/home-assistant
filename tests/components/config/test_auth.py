@@ -34,7 +34,9 @@ async def test_list(hass, hass_ws_client, hass_admin_user):
 
     owner.credentials.append(
         auth_models.Credentials(
-            auth_provider_type="homeassistant", auth_provider_id=None, data={}
+            auth_provider_type="homeassistant",
+            auth_provider_id=None,
+            data={"username": "test-owner"},
         )
     )
 
@@ -58,6 +60,7 @@ async def test_list(hass, hass_ws_client, hass_admin_user):
     assert len(data) == 4
     assert data[0] == {
         "id": hass_admin_user.id,
+        "username": None,
         "name": "Mock User",
         "is_owner": False,
         "is_active": True,
@@ -67,6 +70,7 @@ async def test_list(hass, hass_ws_client, hass_admin_user):
     }
     assert data[1] == {
         "id": owner.id,
+        "username": "test-owner",
         "name": "Test Owner",
         "is_owner": True,
         "is_active": True,
@@ -76,6 +80,7 @@ async def test_list(hass, hass_ws_client, hass_admin_user):
     }
     assert data[2] == {
         "id": system.id,
+        "username": None,
         "name": "Test Hass.io",
         "is_owner": False,
         "is_active": True,
@@ -85,6 +90,7 @@ async def test_list(hass, hass_ws_client, hass_admin_user):
     }
     assert data[3] == {
         "id": inactive.id,
+        "username": None,
         "name": "Inactive User",
         "is_owner": False,
         "is_active": False,
@@ -156,8 +162,35 @@ async def test_create(hass, hass_ws_client, hass_access_token):
 
     assert len(await hass.auth.async_get_users()) == 1
 
+    await client.send_json({"id": 5, "type": "config/auth/create", "name": "Paulus"})
+
+    result = await client.receive_json()
+    assert result["success"], result
+    assert len(await hass.auth.async_get_users()) == 2
+    data_user = result["result"]["user"]
+    user = await hass.auth.async_get_user(data_user["id"])
+    assert user is not None
+    assert user.name == data_user["name"]
+    assert user.is_active
+    assert user.groups == []
+    assert not user.is_admin
+    assert not user.is_owner
+    assert not user.system_generated
+
+
+async def test_create_user_group(hass, hass_ws_client, hass_access_token):
+    """Test create user with a group."""
+    client = await hass_ws_client(hass, hass_access_token)
+
+    assert len(await hass.auth.async_get_users()) == 1
+
     await client.send_json(
-        {"id": 5, "type": auth_config.WS_TYPE_CREATE, "name": "Paulus"}
+        {
+            "id": 5,
+            "type": "config/auth/create",
+            "name": "Paulus",
+            "group_ids": ["system-admin"],
+        }
     )
 
     result = await client.receive_json()
@@ -168,6 +201,8 @@ async def test_create(hass, hass_ws_client, hass_access_token):
     assert user is not None
     assert user.name == data_user["name"]
     assert user.is_active
+    assert user.groups[0].id == "system-admin"
+    assert user.is_admin
     assert not user.is_owner
     assert not user.system_generated
 
@@ -176,7 +211,7 @@ async def test_create_requires_admin(hass, hass_ws_client, hass_read_only_access
     """Test create command requires an admin."""
     client = await hass_ws_client(hass, hass_read_only_access_token)
 
-    await client.send_json({"id": 5, "type": auth_config.WS_TYPE_CREATE, "name": "YO"})
+    await client.send_json({"id": 5, "type": "config/auth/create", "name": "YO"})
 
     result = await client.receive_json()
     assert not result["success"], result

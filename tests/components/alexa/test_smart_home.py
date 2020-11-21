@@ -1,7 +1,10 @@
 """Test for smart home alexa support."""
+
 import pytest
 
 from homeassistant.components.alexa import messages, smart_home
+import homeassistant.components.camera as camera
+from homeassistant.components.cover import DEVICE_CLASS_GATE
 from homeassistant.components.media_player.const import (
     SUPPORT_NEXT_TRACK,
     SUPPORT_PAUSE,
@@ -19,9 +22,11 @@ from homeassistant.components.media_player.const import (
     SUPPORT_VOLUME_STEP,
 )
 import homeassistant.components.vacuum as vacuum
+from homeassistant.config import async_process_ha_core_config
 from homeassistant.const import TEMP_CELSIUS, TEMP_FAHRENHEIT
 from homeassistant.core import Context, callback
 from homeassistant.helpers import entityfilter
+from homeassistant.setup import async_setup_component
 
 from . import (
     DEFAULT_CONFIG,
@@ -35,6 +40,7 @@ from . import (
     reported_properties,
 )
 
+from tests.async_mock import patch
 from tests.common import async_mock_service
 
 
@@ -46,6 +52,22 @@ def events(hass):
         smart_home.EVENT_ALEXA_SMART_HOME, callback(lambda e: events.append(e))
     )
     yield events
+
+
+@pytest.fixture
+async def mock_camera(hass):
+    """Initialize a demo camera platform."""
+    assert await async_setup_component(
+        hass, "camera", {camera.DOMAIN: {"platform": "demo"}}
+    )
+    await hass.async_block_till_done()
+
+
+@pytest.fixture
+async def mock_stream(hass):
+    """Initialize a demo camera platform with streaming."""
+    assert await async_setup_component(hass, "stream", {"stream": {}})
+    await hass.async_block_till_done()
 
 
 def test_create_api_message_defaults(hass):
@@ -147,7 +169,7 @@ def assert_endpoint_capabilities(endpoint, *interfaces):
     them.
     """
     capabilities = endpoint["capabilities"]
-    supported = set(feature["interface"] for feature in capabilities)
+    supported = {feature["interface"] for feature in capabilities}
 
     assert supported == set(interfaces)
     return capabilities
@@ -288,29 +310,10 @@ async def test_script(hass):
         appliance, "Alexa.SceneController", "Alexa"
     )
     scene_capability = get_capability(capabilities, "Alexa.SceneController")
-    assert not scene_capability["supportsDeactivation"]
-
-    await assert_scene_controller_works("script#test", "script.turn_on", None, hass)
-
-
-async def test_cancelable_script(hass):
-    """Test cancalable script discovery."""
-    device = (
-        "script.test_2",
-        "off",
-        {"friendly_name": "Test script 2", "can_cancel": True},
-    )
-    appliance = await discovery_test(device, hass)
-
-    assert appliance["endpointId"] == "script#test_2"
-    capabilities = assert_endpoint_capabilities(
-        appliance, "Alexa.SceneController", "Alexa"
-    )
-    scene_capability = get_capability(capabilities, "Alexa.SceneController")
     assert scene_capability["supportsDeactivation"]
 
     await assert_scene_controller_works(
-        "script#test_2", "script.turn_on", "script.turn_off", hass
+        "script#test", "script.turn_on", "script.turn_off", hass
     )
 
 
@@ -959,7 +962,7 @@ async def test_media_player(hass):
         hass,
     )
 
-    call, _ = await assert_request_calls_service(
+    await assert_request_calls_service(
         "Alexa.ChannelController",
         "ChangeChannel",
         "media_player#test",
@@ -968,7 +971,7 @@ async def test_media_player(hass):
         payload={"channel": {"number": "24"}, "channelMetadata": {"name": ""}},
     )
 
-    call, _ = await assert_request_calls_service(
+    await assert_request_calls_service(
         "Alexa.ChannelController",
         "ChangeChannel",
         "media_player#test",
@@ -977,7 +980,7 @@ async def test_media_player(hass):
         payload={"channel": {"callSign": "ABC"}, "channelMetadata": {"name": ""}},
     )
 
-    call, _ = await assert_request_calls_service(
+    await assert_request_calls_service(
         "Alexa.ChannelController",
         "ChangeChannel",
         "media_player#test",
@@ -986,7 +989,7 @@ async def test_media_player(hass):
         payload={"channel": {"number": ""}, "channelMetadata": {"name": "ABC"}},
     )
 
-    call, _ = await assert_request_calls_service(
+    await assert_request_calls_service(
         "Alexa.ChannelController",
         "ChangeChannel",
         "media_player#test",
@@ -998,7 +1001,7 @@ async def test_media_player(hass):
         },
     )
 
-    call, _ = await assert_request_calls_service(
+    await assert_request_calls_service(
         "Alexa.ChannelController",
         "ChangeChannel",
         "media_player#test",
@@ -1007,7 +1010,7 @@ async def test_media_player(hass):
         payload={"channel": {"uri": "ABC"}, "channelMetadata": {"name": ""}},
     )
 
-    call, _ = await assert_request_calls_service(
+    await assert_request_calls_service(
         "Alexa.ChannelController",
         "SkipChannels",
         "media_player#test",
@@ -1016,7 +1019,7 @@ async def test_media_player(hass):
         payload={"channelCount": 1},
     )
 
-    call, _ = await assert_request_calls_service(
+    await assert_request_calls_service(
         "Alexa.ChannelController",
         "SkipChannels",
         "media_player#test",
@@ -1447,7 +1450,7 @@ async def test_media_player_seek_error(hass):
 
     # Test for media_position error.
     with pytest.raises(AssertionError):
-        call, msg = await assert_request_calls_service(
+        _, msg = await assert_request_calls_service(
             "Alexa.SeekController",
             "AdjustSeekPosition",
             "media_player#test_seek",
@@ -1487,7 +1490,7 @@ async def test_automation(hass):
     appliance = await discovery_test(device, hass)
 
     assert appliance["endpointId"] == "automation#test"
-    assert appliance["displayCategories"][0] == "OTHER"
+    assert appliance["displayCategories"][0] == "ACTIVITY_TRIGGER"
     assert appliance["friendlyName"] == "Test automation"
     assert_endpoint_capabilities(
         appliance, "Alexa.PowerController", "Alexa.EndpointHealth", "Alexa"
@@ -1687,11 +1690,7 @@ async def assert_percentage_changes(
     AdjustPercentage, AdjustBrightness, etc. are examples of such requests.
     """
     for result_volume, adjustment in adjustments:
-        if parameter:
-            payload = {parameter: adjustment}
-        else:
-            payload = {}
-
+        payload = {parameter: adjustment} if parameter else {}
         call, _ = await assert_request_calls_service(
             namespace, name, endpoint, service, hass, payload=payload
         )
@@ -2455,7 +2454,7 @@ async def test_alarm_control_panel_disarmed(hass):
     properties = await reported_properties(hass, "alarm_control_panel#test_1")
     properties.assert_equal("Alexa.SecurityPanelController", "armState", "DISARMED")
 
-    call, msg = await assert_request_calls_service(
+    _, msg = await assert_request_calls_service(
         "Alexa.SecurityPanelController",
         "Arm",
         "alarm_control_panel#test_1",
@@ -2467,7 +2466,7 @@ async def test_alarm_control_panel_disarmed(hass):
     properties = ReportedProperties(msg["context"]["properties"])
     properties.assert_equal("Alexa.SecurityPanelController", "armState", "ARMED_STAY")
 
-    call, msg = await assert_request_calls_service(
+    _, msg = await assert_request_calls_service(
         "Alexa.SecurityPanelController",
         "Arm",
         "alarm_control_panel#test_1",
@@ -2592,33 +2591,47 @@ async def test_mode_unsupported_domain(hass):
     assert msg["payload"]["type"] == "INVALID_DIRECTIVE"
 
 
-async def test_cover(hass):
-    """Test garage cover discovery and powerController."""
+async def test_cover_garage_door(hass):
+    """Test garage door cover discovery."""
     device = (
-        "cover.test",
+        "cover.test_garage_door",
         "off",
         {
-            "friendly_name": "Test cover",
+            "friendly_name": "Test cover garage door",
             "supported_features": 3,
             "device_class": "garage",
         },
     )
     appliance = await discovery_test(device, hass)
 
-    assert appliance["endpointId"] == "cover#test"
+    assert appliance["endpointId"] == "cover#test_garage_door"
     assert appliance["displayCategories"][0] == "GARAGE_DOOR"
-    assert appliance["friendlyName"] == "Test cover"
+    assert appliance["friendlyName"] == "Test cover garage door"
 
     assert_endpoint_capabilities(
-        appliance,
-        "Alexa.ModeController",
-        "Alexa.PowerController",
-        "Alexa.EndpointHealth",
-        "Alexa",
+        appliance, "Alexa.ModeController", "Alexa.EndpointHealth", "Alexa"
     )
 
-    await assert_power_controller_works(
-        "cover#test", "cover.open_cover", "cover.close_cover", hass
+
+async def test_cover_gate(hass):
+    """Test gate cover discovery."""
+    device = (
+        "cover.test_gate",
+        "off",
+        {
+            "friendly_name": "Test cover gate",
+            "supported_features": 3,
+            "device_class": DEVICE_CLASS_GATE,
+        },
+    )
+    appliance = await discovery_test(device, hass)
+
+    assert appliance["endpointId"] == "cover#test_gate"
+    assert appliance["displayCategories"][0] == "GARAGE_DOOR"
+    assert appliance["friendlyName"] == "Test cover gate"
+
+    assert_endpoint_capabilities(
+        appliance, "Alexa.ModeController", "Alexa.EndpointHealth", "Alexa"
     )
 
 
@@ -3265,8 +3278,8 @@ async def test_media_player_eq_modes(hass):
         assert call.data["sound_mode"] == mode.lower()
 
 
-async def test_media_player_sound_mode_list_none(hass):
-    """Test EqualizerController bands directive not supported."""
+async def test_media_player_sound_mode_list_unsupported(hass):
+    """Test EqualizerController with unsupported sound modes."""
     device = (
         "media_player.test",
         "on",
@@ -3274,12 +3287,17 @@ async def test_media_player_sound_mode_list_none(hass):
             "friendly_name": "Test media player",
             "supported_features": SUPPORT_SELECT_SOUND_MODE,
             "sound_mode": "unknown",
-            "sound_mode_list": None,
+            "sound_mode_list": ["unsupported", "non-existing"],
         },
     )
     appliance = await discovery_test(device, hass)
     assert appliance["endpointId"] == "media_player#test"
     assert appliance["friendlyName"] == "Test media player"
+
+    # Test equalizer controller is not there
+    assert_endpoint_capabilities(
+        appliance, "Alexa", "Alexa.PowerController", "Alexa.EndpointHealth"
+    )
 
 
 async def test_media_player_eq_bands_not_supported(hass):
@@ -3356,7 +3374,7 @@ async def test_timer_hold(hass):
     assert appliance["friendlyName"] == "Laundry"
 
     capabilities = assert_endpoint_capabilities(
-        appliance, "Alexa", "Alexa.TimeHoldController"
+        appliance, "Alexa", "Alexa.TimeHoldController", "Alexa.PowerController"
     )
 
     time_hold_capability = get_capability(capabilities, "Alexa.TimeHoldController")
@@ -3378,8 +3396,45 @@ async def test_timer_resume(hass):
     )
     await discovery_test(device, hass)
 
+    properties = await reported_properties(hass, "timer#laundry")
+    properties.assert_equal("Alexa.PowerController", "powerState", "ON")
+
     await assert_request_calls_service(
         "Alexa.TimeHoldController", "Resume", "timer#laundry", "timer.start", hass
+    )
+
+
+async def test_timer_start(hass):
+    """Test timer start."""
+    device = (
+        "timer.laundry",
+        "idle",
+        {"friendly_name": "Laundry", "duration": "00:01:00", "remaining": "00:50:00"},
+    )
+    await discovery_test(device, hass)
+
+    properties = await reported_properties(hass, "timer#laundry")
+    properties.assert_equal("Alexa.PowerController", "powerState", "OFF")
+
+    await assert_request_calls_service(
+        "Alexa.PowerController", "TurnOn", "timer#laundry", "timer.start", hass
+    )
+
+
+async def test_timer_cancel(hass):
+    """Test timer cancel."""
+    device = (
+        "timer.laundry",
+        "active",
+        {"friendly_name": "Laundry", "duration": "00:01:00", "remaining": "00:50:00"},
+    )
+    await discovery_test(device, hass)
+
+    properties = await reported_properties(hass, "timer#laundry")
+    properties.assert_equal("Alexa.PowerController", "powerState", "ON")
+
+    await assert_request_calls_service(
+        "Alexa.PowerController", "TurnOff", "timer#laundry", "timer.cancel", hass
     )
 
 
@@ -3394,13 +3449,14 @@ async def test_vacuum_discovery(hass):
             | vacuum.SUPPORT_TURN_OFF
             | vacuum.SUPPORT_START
             | vacuum.SUPPORT_STOP
+            | vacuum.SUPPORT_RETURN_HOME
             | vacuum.SUPPORT_PAUSE,
         },
     )
     appliance = await discovery_test(device, hass)
 
     assert appliance["endpointId"] == "vacuum#test_1"
-    assert appliance["displayCategories"][0] == "OTHER"
+    assert appliance["displayCategories"][0] == "VACUUM_CLEANER"
     assert appliance["friendlyName"] == "Test vacuum 1"
 
     assert_endpoint_capabilities(
@@ -3409,6 +3465,17 @@ async def test_vacuum_discovery(hass):
         "Alexa.TimeHoldController",
         "Alexa.EndpointHealth",
         "Alexa",
+    )
+
+    properties = await reported_properties(hass, "vacuum#test_1")
+    properties.assert_equal("Alexa.PowerController", "powerState", "OFF")
+
+    await assert_request_calls_service(
+        "Alexa.PowerController", "TurnOn", "vacuum#test_1", "vacuum.turn_on", hass
+    )
+
+    await assert_request_calls_service(
+        "Alexa.PowerController", "TurnOff", "vacuum#test_1", "vacuum.turn_off", hass
     )
 
 
@@ -3432,7 +3499,7 @@ async def test_vacuum_fan_speed(hass):
     appliance = await discovery_test(device, hass)
 
     assert appliance["endpointId"] == "vacuum#test_2"
-    assert appliance["displayCategories"][0] == "OTHER"
+    assert appliance["displayCategories"][0] == "VACUUM_CLEANER"
     assert appliance["friendlyName"] == "Test vacuum 2"
 
     capabilities = assert_endpoint_capabilities(
@@ -3604,4 +3671,202 @@ async def test_vacuum_resume(hass):
         "vacuum#test_4",
         "vacuum.start_pause",
         hass,
+    )
+
+
+async def test_vacuum_discovery_no_turn_on(hass):
+    """Test vacuum discovery for vacuums without turn_on."""
+    device = (
+        "vacuum.test_5",
+        "cleaning",
+        {
+            "friendly_name": "Test vacuum 5",
+            "supported_features": vacuum.SUPPORT_TURN_OFF
+            | vacuum.SUPPORT_START
+            | vacuum.SUPPORT_RETURN_HOME,
+        },
+    )
+    appliance = await discovery_test(device, hass)
+
+    assert_endpoint_capabilities(
+        appliance, "Alexa.PowerController", "Alexa.EndpointHealth", "Alexa"
+    )
+
+    properties = await reported_properties(hass, "vacuum#test_5")
+    properties.assert_equal("Alexa.PowerController", "powerState", "ON")
+
+    await assert_request_calls_service(
+        "Alexa.PowerController", "TurnOn", "vacuum#test_5", "vacuum.start", hass
+    )
+
+    await assert_request_calls_service(
+        "Alexa.PowerController", "TurnOff", "vacuum#test_5", "vacuum.turn_off", hass
+    )
+
+
+async def test_vacuum_discovery_no_turn_off(hass):
+    """Test vacuum discovery for vacuums without turn_off."""
+    device = (
+        "vacuum.test_6",
+        "cleaning",
+        {
+            "friendly_name": "Test vacuum 6",
+            "supported_features": vacuum.SUPPORT_TURN_ON
+            | vacuum.SUPPORT_START
+            | vacuum.SUPPORT_RETURN_HOME,
+        },
+    )
+    appliance = await discovery_test(device, hass)
+
+    assert_endpoint_capabilities(
+        appliance, "Alexa.PowerController", "Alexa.EndpointHealth", "Alexa"
+    )
+
+    await assert_request_calls_service(
+        "Alexa.PowerController", "TurnOn", "vacuum#test_6", "vacuum.turn_on", hass
+    )
+
+    await assert_request_calls_service(
+        "Alexa.PowerController",
+        "TurnOff",
+        "vacuum#test_6",
+        "vacuum.return_to_base",
+        hass,
+    )
+
+
+async def test_vacuum_discovery_no_turn_on_or_off(hass):
+    """Test vacuum discovery vacuums without on or off."""
+    device = (
+        "vacuum.test_7",
+        "cleaning",
+        {
+            "friendly_name": "Test vacuum 7",
+            "supported_features": vacuum.SUPPORT_START | vacuum.SUPPORT_RETURN_HOME,
+        },
+    )
+    appliance = await discovery_test(device, hass)
+
+    assert_endpoint_capabilities(
+        appliance, "Alexa.PowerController", "Alexa.EndpointHealth", "Alexa"
+    )
+
+    await assert_request_calls_service(
+        "Alexa.PowerController", "TurnOn", "vacuum#test_7", "vacuum.start", hass
+    )
+
+    await assert_request_calls_service(
+        "Alexa.PowerController",
+        "TurnOff",
+        "vacuum#test_7",
+        "vacuum.return_to_base",
+        hass,
+    )
+
+
+async def test_camera_discovery(hass, mock_stream):
+    """Test camera discovery."""
+    device = (
+        "camera.test",
+        "idle",
+        {"friendly_name": "Test camera", "supported_features": 3},
+    )
+
+    hass.config.components.add("cloud")
+    with patch.object(
+        hass.components.cloud,
+        "async_remote_ui_url",
+        return_value="https://example.nabu.casa",
+    ):
+        appliance = await discovery_test(device, hass)
+
+    capabilities = assert_endpoint_capabilities(
+        appliance, "Alexa.CameraStreamController", "Alexa.EndpointHealth", "Alexa"
+    )
+
+    camera_stream_capability = get_capability(
+        capabilities, "Alexa.CameraStreamController"
+    )
+    configuration = camera_stream_capability["cameraStreamConfigurations"][0]
+    assert "HLS" in configuration["protocols"]
+    assert {"width": 1280, "height": 720} in configuration["resolutions"]
+    assert "NONE" in configuration["authorizationTypes"]
+    assert "H264" in configuration["videoCodecs"]
+    assert "AAC" in configuration["audioCodecs"]
+
+
+async def test_camera_discovery_without_stream(hass):
+    """Test camera discovery without stream integration."""
+    device = (
+        "camera.test",
+        "idle",
+        {"friendly_name": "Test camera", "supported_features": 3},
+    )
+
+    hass.config.components.add("cloud")
+    with patch.object(
+        hass.components.cloud,
+        "async_remote_ui_url",
+        return_value="https://example.nabu.casa",
+    ):
+        appliance = await discovery_test(device, hass)
+        # assert Alexa.CameraStreamController is not yielded.
+        assert_endpoint_capabilities(appliance, "Alexa.EndpointHealth", "Alexa")
+
+
+@pytest.mark.parametrize(
+    "url,result",
+    [
+        ("http://nohttpswrongport.org:8123", 2),
+        ("http://nohttpsport443.org:443", 2),
+        ("https://httpsnnonstandport.org:8123", 2),
+        ("https://correctschemaandport.org:443", 3),
+        ("https://correctschemaandport.org", 3),
+    ],
+)
+async def test_camera_hass_urls(hass, mock_stream, url, result):
+    """Test camera discovery with unsupported urls."""
+    device = (
+        "camera.test",
+        "idle",
+        {"friendly_name": "Test camera", "supported_features": 3},
+    )
+    await async_process_ha_core_config(hass, {"external_url": url})
+
+    appliance = await discovery_test(device, hass)
+    assert len(appliance["capabilities"]) == result
+
+
+async def test_initialize_camera_stream(hass, mock_camera, mock_stream):
+    """Test InitializeCameraStreams handler."""
+    request = get_new_request(
+        "Alexa.CameraStreamController", "InitializeCameraStreams", "camera#demo_camera"
+    )
+
+    await async_process_ha_core_config(
+        hass, {"external_url": "https://mycamerastream.test"}
+    )
+
+    with patch(
+        "homeassistant.components.demo.camera.DemoCamera.stream_source",
+        return_value="rtsp://example.local",
+    ):
+        msg = await smart_home.async_handle_message(hass, DEFAULT_CONFIG, request)
+        await hass.async_block_till_done()
+
+    assert "event" in msg
+    response = msg["event"]
+    assert response["header"]["namespace"] == "Alexa.CameraStreamController"
+    assert response["header"]["name"] == "Response"
+    camera_streams = response["payload"]["cameraStreams"]
+    assert "https://mycamerastream.test/api/hls/" in camera_streams[0]["uri"]
+    assert camera_streams[0]["protocol"] == "HLS"
+    assert camera_streams[0]["resolution"]["width"] == 1280
+    assert camera_streams[0]["resolution"]["height"] == 720
+    assert camera_streams[0]["authorizationType"] == "NONE"
+    assert camera_streams[0]["videoCodec"] == "H264"
+    assert camera_streams[0]["audioCodec"] == "AAC"
+    assert (
+        "https://mycamerastream.test/api/camera_proxy/camera.demo_camera?token="
+        in response["payload"]["imageUri"]
     )

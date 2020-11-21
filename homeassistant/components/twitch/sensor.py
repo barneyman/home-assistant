@@ -6,7 +6,7 @@ from twitch import TwitchClient
 import voluptuous as vol
 
 from homeassistant.components.sensor import PLATFORM_SCHEMA
-from homeassistant.const import ATTR_FRIENDLY_NAME, CONF_TOKEN
+from homeassistant.const import CONF_CLIENT_ID, CONF_TOKEN
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.entity import Entity
 
@@ -23,7 +23,6 @@ ATTR_FOLLOWING = "followers"
 ATTR_VIEWS = "views"
 
 CONF_CHANNELS = "channels"
-CONF_CLIENT_ID = "client_id"
 
 ICON = "mdi:twitch"
 
@@ -74,11 +73,6 @@ class TwitchSensor(Entity):
         self._statistics = None
 
     @property
-    def should_poll(self):
-        """Device should be polled."""
-        return True
-
-    @property
     def name(self):
         """Return the name of the sensor."""
         return self._channel.display_name
@@ -96,10 +90,7 @@ class TwitchSensor(Entity):
     @property
     def device_state_attributes(self):
         """Return the state attributes."""
-        attr = {
-            ATTR_FRIENDLY_NAME: self._channel.display_name,
-        }
-        attr.update(self._statistics)
+        attr = dict(self._statistics)
 
         if self._oauth_enabled:
             attr.update(self._subscription)

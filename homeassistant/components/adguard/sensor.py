@@ -1,6 +1,5 @@
 """Support for AdGuard Home sensors."""
 from datetime import timedelta
-import logging
 
 from adguardhome import AdGuardHomeConnectionError
 
@@ -11,10 +10,9 @@ from homeassistant.components.adguard.const import (
     DOMAIN,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import PERCENTAGE, TIME_MILLISECONDS
 from homeassistant.exceptions import PlatformNotReady
 from homeassistant.helpers.typing import HomeAssistantType
-
-_LOGGER = logging.getLogger(__name__)
 
 SCAN_INTERVAL = timedelta(seconds=300)
 PARALLEL_UPDATES = 4
@@ -133,7 +131,7 @@ class AdGuardHomePercentageBlockedSensor(AdGuardHomeSensor):
             "AdGuard DNS Queries Blocked Ratio",
             "mdi:magnify-close",
             "blocked_percentage",
-            "%",
+            PERCENTAGE,
         )
 
     async def _adguard_update(self) -> None:
@@ -206,7 +204,7 @@ class AdGuardHomeAverageProcessingTimeSensor(AdGuardHomeSensor):
             "AdGuard Average Processing Speed",
             "mdi:speedometer",
             "average_speed",
-            "ms",
+            TIME_MILLISECONDS,
         )
 
     async def _adguard_update(self) -> None:

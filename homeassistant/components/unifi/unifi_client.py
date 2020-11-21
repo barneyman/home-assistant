@@ -1,48 +1,40 @@
 """Base class for UniFi clients."""
-
-import logging
-
-from homeassistant.core import callback
 from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC
-from homeassistant.helpers.dispatcher import async_dispatcher_connect
-from homeassistant.helpers.entity import Entity
 
-LOGGER = logging.getLogger(__name__)
+from .unifi_entity_base import UniFiBase
 
 
-class UniFiClient(Entity):
+class UniFiClient(UniFiBase):
     """Base class for UniFi clients."""
 
     def __init__(self, client, controller) -> None:
         """Set up client."""
-        self.client = client
-        self.controller = controller
-        self.listeners = []
-        self.is_wired = self.client.mac not in controller.wireless_clients
+        super().__init__(client, controller)
 
-    async def async_added_to_hass(self) -> None:
-        """Client entity created."""
-        LOGGER.debug("New UniFi client %s (%s)", self.name, self.client.mac)
-        self.client.register_callback(self.async_update_callback)
-        self.listeners.append(
-            async_dispatcher_connect(
-                self.hass, self.controller.signal_reachable, self.async_update_callback
-            )
-        )
+        self._is_wired = client.mac not in controller.wireless_clients
 
-    async def async_will_remove_from_hass(self) -> None:
-        """Disconnect client object when removed."""
-        self.client.remove_callback(self.async_update_callback)
-        for unsub_dispatcher in self.listeners:
-            unsub_dispatcher()
+    @property
+    def client(self):
+        """Wrap item."""
+        return self._item
 
-    @callback
-    def async_update_callback(self) -> None:
-        """Update the clients state."""
-        if self.is_wired and self.client.mac in self.controller.wireless_clients:
-            self.is_wired = False
-        LOGGER.debug("Updating client %s %s", self.entity_id, self.client.mac)
-        self.async_schedule_update_ha_state()
+    @property
+    def is_wired(self):
+        """Return if the client is wired.
+
+        Allows disabling logic to keep track of clients affected by UniFi wired bug marking wireless devices as wired. This is useful when running a network not only containing UniFi APs.
+        """
+        if self._is_wired and self.client.mac in self.controller.wireless_clients:
+            self._is_wired = False
+
+        if self.controller.option_ignore_wired_bug:
+            return self.client.is_wired
+        return self._is_wired
+
+    @property
+    def unique_id(self):
+        """Return a unique identifier for this switch."""
+        return f"{self.TYPE}-{self.client.mac}"
 
     @property
     def name(self) -> str:
@@ -57,9 +49,8 @@ class UniFiClient(Entity):
     @property
     def device_info(self) -> dict:
         """Return a client description for device registry."""
-        return {"connections": {(CONNECTION_NETWORK_MAC, self.client.mac)}}
-
-    @property
-    def should_poll(self) -> bool:
-        """No polling needed."""
-        return True
+        return {
+            "connections": {(CONNECTION_NETWORK_MAC, self.client.mac)},
+            "default_name": self.name,
+            "default_manufacturer": self.client.oui,
+        }

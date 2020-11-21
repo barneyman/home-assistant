@@ -1,9 +1,16 @@
 """Sensor platform for the Corona virus."""
 from homeassistant.const import ATTR_ATTRIBUTION
-from homeassistant.helpers.entity import Entity
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import get_coordinator
 from .const import ATTRIBUTION, OPTION_WORLDWIDE
+
+SENSORS = {
+    "confirmed": "mdi:emoticon-neutral-outline",
+    "current": "mdi:emoticon-sad-outline",
+    "recovered": "mdi:emoticon-happy-outline",
+    "deaths": "mdi:emoticon-cry-outline",
+}
 
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
@@ -12,11 +19,11 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
     async_add_entities(
         CoronavirusSensor(coordinator, config_entry.data["country"], info_type)
-        for info_type in ("confirmed", "recovered", "deaths", "current")
+        for info_type in SENSORS
     )
 
 
-class CoronavirusSensor(Entity):
+class CoronavirusSensor(CoordinatorEntity):
     """Sensor representing corona virus data."""
 
     name = None
@@ -24,12 +31,12 @@ class CoronavirusSensor(Entity):
 
     def __init__(self, coordinator, country, info_type):
         """Initialize coronavirus sensor."""
+        super().__init__(coordinator)
         if country == OPTION_WORLDWIDE:
             self.name = f"Worldwide Coronavirus {info_type}"
         else:
             self.name = f"{coordinator.data[country].country} Coronavirus {info_type}"
         self.unique_id = f"{country}-{info_type}"
-        self.coordinator = coordinator
         self.country = country
         self.info_type = info_type
 
@@ -44,11 +51,21 @@ class CoronavirusSensor(Entity):
     def state(self):
         """State of the sensor."""
         if self.country == OPTION_WORLDWIDE:
-            return sum(
-                getattr(case, self.info_type) for case in self.coordinator.data.values()
-            )
+            sum_cases = 0
+            for case in self.coordinator.data.values():
+                value = getattr(case, self.info_type)
+                if value is None:
+                    continue
+                sum_cases += value
+
+            return sum_cases
 
         return getattr(self.coordinator.data[self.country], self.info_type)
+
+    @property
+    def icon(self):
+        """Return the icon."""
+        return SENSORS[self.info_type]
 
     @property
     def unit_of_measurement(self):
@@ -59,11 +76,3 @@ class CoronavirusSensor(Entity):
     def device_state_attributes(self):
         """Return device attributes."""
         return {ATTR_ATTRIBUTION: ATTRIBUTION}
-
-    async def async_added_to_hass(self):
-        """When entity is added to hass."""
-        self.coordinator.async_add_listener(self.async_write_ha_state)
-
-    async def async_will_remove_from_hass(self):
-        """When entity will be removed from hass."""
-        self.coordinator.async_remove_listener(self.async_write_ha_state)

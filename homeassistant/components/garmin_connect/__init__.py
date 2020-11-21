@@ -38,18 +38,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     garmin_client = Garmin(username, password)
 
     try:
-        garmin_client.login()
+        await hass.async_add_executor_job(garmin_client.login)
     except (
         GarminConnectAuthenticationError,
         GarminConnectTooManyRequestsError,
     ) as err:
-        _LOGGER.error("Error occurred during Garmin Connect login: %s", err)
+        _LOGGER.error("Error occurred during Garmin Connect login request: %s", err)
         return False
     except (GarminConnectConnectionError) as err:
-        _LOGGER.error("Error occurred during Garmin Connect login: %s", err)
-        raise ConfigEntryNotReady
+        _LOGGER.error(
+            "Connection error occurred during Garmin Connect login request: %s", err
+        )
+        raise ConfigEntryNotReady from err
     except Exception:  # pylint: disable=broad-except
-        _LOGGER.error("Unknown error occurred during Garmin Connect login")
+        _LOGGER.exception("Unknown error occurred during Garmin Connect login request")
         return False
 
     garmin_data = GarminConnectData(hass, garmin_client)
@@ -84,8 +86,20 @@ class GarminConnectData:
 
     def __init__(self, hass, client):
         """Initialize."""
+        self.hass = hass
         self.client = client
         self.data = None
+
+    async def _get_combined_alarms_of_all_devices(self):
+        """Combine the list of active alarms from all garmin devices."""
+        alarms = []
+        devices = await self.hass.async_add_executor_job(self.client.get_devices)
+        for device in devices:
+            device_settings = await self.hass.async_add_executor_job(
+                self.client.get_device_settings, device["deviceId"]
+            )
+            alarms += device_settings["alarms"]
+        return alarms
 
     @Throttle(MIN_SCAN_INTERVAL)
     async def async_update(self):
@@ -93,16 +107,21 @@ class GarminConnectData:
         today = date.today()
 
         try:
-            self.data = self.client.get_stats(today.isoformat())
+            self.data = await self.hass.async_add_executor_job(
+                self.client.get_stats_and_body, today.isoformat()
+            )
+            self.data["nextAlarm"] = await self._get_combined_alarms_of_all_devices()
         except (
             GarminConnectAuthenticationError,
             GarminConnectTooManyRequestsError,
+            GarminConnectConnectionError,
         ) as err:
-            _LOGGER.error("Error occurred during Garmin Connect get stats: %s", err)
-            return
-        except (GarminConnectConnectionError) as err:
-            _LOGGER.error("Error occurred during Garmin Connect get stats: %s", err)
+            _LOGGER.error(
+                "Error occurred during Garmin Connect get activity request: %s", err
+            )
             return
         except Exception:  # pylint: disable=broad-except
-            _LOGGER.error("Unknown error occurred during Garmin Connect get stats")
+            _LOGGER.exception(
+                "Unknown error occurred during Garmin Connect get activity request"
+            )
             return

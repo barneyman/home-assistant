@@ -1,6 +1,7 @@
 """HTTP views to interact with the entity registry."""
 import voluptuous as vol
 
+from homeassistant import config_entries
 from homeassistant.components import websocket_api
 from homeassistant.components.websocket_api.const import ERR_NOT_FOUND
 from homeassistant.components.websocket_api.decorators import (
@@ -57,7 +58,9 @@ async def websocket_get_entity(hass, connection, msg):
         )
         return
 
-    connection.send_message(websocket_api.result_message(msg["id"], _entry_dict(entry)))
+    connection.send_message(
+        websocket_api.result_message(msg["id"], _entry_ext_dict(entry))
+    )
 
 
 @require_admin
@@ -69,6 +72,7 @@ async def websocket_get_entity(hass, connection, msg):
         # If passed in, we update value. Passing None will remove old value.
         vol.Optional("name"): vol.Any(str, None),
         vol.Optional("icon"): vol.Any(str, None),
+        vol.Optional("area_id"): vol.Any(str, None),
         vol.Optional("new_entity_id"): str,
         # We only allow setting disabled_by user via API.
         vol.Optional("disabled_by"): vol.Any("user", None),
@@ -89,7 +93,7 @@ async def websocket_update_entity(hass, connection, msg):
 
     changes = {}
 
-    for key in ("name", "icon", "disabled_by"):
+    for key in ("name", "icon", "area_id", "disabled_by"):
         if key in msg:
             changes[key] = msg[key]
 
@@ -110,10 +114,15 @@ async def websocket_update_entity(hass, connection, msg):
         connection.send_message(
             websocket_api.error_message(msg["id"], "invalid_info", str(err))
         )
-    else:
-        connection.send_message(
-            websocket_api.result_message(msg["id"], _entry_dict(entry))
-        )
+        return
+    result = {"entity_entry": _entry_ext_dict(entry)}
+    if "disabled_by" in changes and changes["disabled_by"] is None:
+        config_entry = hass.config_entries.async_get_entry(entry.config_entry_id)
+        if config_entry and not config_entry.supports_unload:
+            result["require_restart"] = True
+        else:
+            result["reload_delay"] = config_entries.RELOAD_AFTER_UPDATE_DELAY
+    connection.send_result(msg["id"], result)
 
 
 @require_admin
@@ -147,11 +156,21 @@ def _entry_dict(entry):
     return {
         "config_entry_id": entry.config_entry_id,
         "device_id": entry.device_id,
+        "area_id": entry.area_id,
         "disabled_by": entry.disabled_by,
         "entity_id": entry.entity_id,
         "name": entry.name,
         "icon": entry.icon,
         "platform": entry.platform,
-        "original_name": entry.original_name,
-        "original_icon": entry.original_icon,
     }
+
+
+@callback
+def _entry_ext_dict(entry):
+    """Convert entry to API format."""
+    data = _entry_dict(entry)
+    data["original_name"] = entry.original_name
+    data["original_icon"] = entry.original_icon
+    data["unique_id"] = entry.unique_id
+    data["capabilities"] = entry.capabilities
+    return data

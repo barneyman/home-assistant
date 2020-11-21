@@ -1,6 +1,4 @@
 """Support for Abode Security System alarm control panels."""
-import logging
-
 import homeassistant.components.alarm_control_panel as alarm
 from homeassistant.components.alarm_control_panel.const import (
     SUPPORT_ALARM_ARM_AWAY,
@@ -16,8 +14,6 @@ from homeassistant.const import (
 from . import AbodeDevice
 from .const import ATTRIBUTION, DOMAIN
 
-_LOGGER = logging.getLogger(__name__)
-
 ICON = "mdi:security"
 
 
@@ -29,7 +25,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     )
 
 
-class AbodeAlarm(AbodeDevice, alarm.AlarmControlPanel):
+class AbodeAlarm(AbodeDevice, alarm.AlarmControlPanelEntity):
     """An alarm_control_panel implementation for Abode."""
 
     @property
@@ -49,6 +45,11 @@ class AbodeAlarm(AbodeDevice, alarm.AlarmControlPanel):
         else:
             state = None
         return state
+
+    @property
+    def code_arm_required(self):
+        """Whether the code is required for arm actions."""
+        return False
 
     @property
     def supported_features(self) -> int:

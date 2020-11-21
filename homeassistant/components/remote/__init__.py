@@ -2,10 +2,11 @@
 from datetime import timedelta
 import functools as ft
 import logging
-from typing import Any, Iterable
+from typing import Any, Iterable, cast
 
 import voluptuous as vol
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     SERVICE_TOGGLE,
     SERVICE_TURN_OFF,
@@ -23,12 +24,13 @@ from homeassistant.helpers.entity_component import EntityComponent
 from homeassistant.helpers.typing import ConfigType, HomeAssistantType
 from homeassistant.loader import bind_hass
 
-# mypy: allow-untyped-calls
+# mypy: allow-untyped-calls, allow-untyped-defs, no-check-untyped-defs
 
 _LOGGER = logging.getLogger(__name__)
 
 ATTR_ACTIVITY = "activity"
 ATTR_COMMAND = "command"
+ATTR_COMMAND_TYPE = "command_type"
 ATTR_DEVICE = "device"
 ATTR_NUM_REPEATS = "num_repeats"
 ATTR_DELAY_SECS = "delay_secs"
@@ -45,6 +47,7 @@ MIN_TIME_BETWEEN_SCANS = timedelta(seconds=10)
 
 SERVICE_SEND_COMMAND = "send_command"
 SERVICE_LEARN_COMMAND = "learn_command"
+SERVICE_DELETE_COMMAND = "delete_command"
 SERVICE_SYNC = "sync"
 
 DEFAULT_NUM_REPEATS = 1
@@ -52,6 +55,7 @@ DEFAULT_DELAY_SECS = 0.4
 DEFAULT_HOLD_SECS = 0
 
 SUPPORT_LEARN_COMMAND = 1
+SUPPORT_DELETE_COMMAND = 2
 
 REMOTE_SERVICE_ACTIVITY_SCHEMA = make_entity_service_schema(
     {vol.Optional(ATTR_ACTIVITY): cv.string}
@@ -66,7 +70,9 @@ def is_on(hass: HomeAssistantType, entity_id: str) -> bool:
 
 async def async_setup(hass: HomeAssistantType, config: ConfigType) -> bool:
     """Track states and offer events for remotes."""
-    component = EntityComponent(_LOGGER, DOMAIN, hass, SCAN_INTERVAL)
+    component = hass.data[DOMAIN] = EntityComponent(
+        _LOGGER, DOMAIN, hass, SCAN_INTERVAL
+    )
     await component.async_setup(config)
 
     component.async_register_entity_service(
@@ -100,16 +106,36 @@ async def async_setup(hass: HomeAssistantType, config: ConfigType) -> bool:
         {
             vol.Optional(ATTR_DEVICE): cv.string,
             vol.Optional(ATTR_COMMAND): vol.All(cv.ensure_list, [cv.string]),
+            vol.Optional(ATTR_COMMAND_TYPE): cv.string,
             vol.Optional(ATTR_ALTERNATIVE): cv.boolean,
             vol.Optional(ATTR_TIMEOUT): cv.positive_int,
         },
         "async_learn_command",
     )
 
+    component.async_register_entity_service(
+        SERVICE_DELETE_COMMAND,
+        {
+            vol.Required(ATTR_COMMAND): vol.All(cv.ensure_list, [cv.string]),
+            vol.Optional(ATTR_DEVICE): cv.string,
+        },
+        "async_delete_command",
+    )
+
     return True
 
 
-class RemoteDevice(ToggleEntity):
+async def async_setup_entry(hass: HomeAssistantType, entry: ConfigEntry) -> bool:
+    """Set up a config entry."""
+    return await cast(EntityComponent, hass.data[DOMAIN]).async_setup_entry(entry)
+
+
+async def async_unload_entry(hass: HomeAssistantType, entry: ConfigEntry) -> bool:
+    """Unload a config entry."""
+    return await cast(EntityComponent, hass.data[DOMAIN]).async_unload_entry(entry)
+
+
+class RemoteEntity(ToggleEntity):
     """Representation of a remote."""
 
     @property
@@ -136,3 +162,26 @@ class RemoteDevice(ToggleEntity):
         """Learn a command from a device."""
         assert self.hass is not None
         await self.hass.async_add_executor_job(ft.partial(self.learn_command, **kwargs))
+
+    def delete_command(self, **kwargs: Any) -> None:
+        """Delete commands from the database."""
+        raise NotImplementedError()
+
+    async def async_delete_command(self, **kwargs: Any) -> None:
+        """Delete commands from the database."""
+        assert self.hass is not None
+        await self.hass.async_add_executor_job(
+            ft.partial(self.delete_command, **kwargs)
+        )
+
+
+class RemoteDevice(RemoteEntity):
+    """Representation of a remote (for backwards compatibility)."""
+
+    def __init_subclass__(cls, **kwargs):
+        """Print deprecation warning."""
+        super().__init_subclass__(**kwargs)
+        _LOGGER.warning(
+            "RemoteDevice is deprecated, modify %s to extend RemoteEntity",
+            cls.__name__,
+        )

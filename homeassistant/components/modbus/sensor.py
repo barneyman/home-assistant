@@ -19,26 +19,29 @@ from homeassistant.const import (
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.restore_state import RestoreEntity
 
-from . import CONF_HUB, DEFAULT_HUB, DOMAIN as MODBUS_DOMAIN
+from .const import (
+    CALL_TYPE_REGISTER_HOLDING,
+    CALL_TYPE_REGISTER_INPUT,
+    CONF_COUNT,
+    CONF_DATA_TYPE,
+    CONF_HUB,
+    CONF_PRECISION,
+    CONF_REGISTER,
+    CONF_REGISTER_TYPE,
+    CONF_REGISTERS,
+    CONF_REVERSE_ORDER,
+    CONF_SCALE,
+    DATA_TYPE_CUSTOM,
+    DATA_TYPE_FLOAT,
+    DATA_TYPE_INT,
+    DATA_TYPE_STRING,
+    DATA_TYPE_UINT,
+    DEFAULT_HUB,
+    DEFAULT_STRUCT_FORMAT,
+    MODBUS_DOMAIN,
+)
 
 _LOGGER = logging.getLogger(__name__)
-
-CONF_COUNT = "count"
-CONF_DATA_TYPE = "data_type"
-CONF_PRECISION = "precision"
-CONF_REGISTER = "register"
-CONF_REGISTER_TYPE = "register_type"
-CONF_REGISTERS = "registers"
-CONF_REVERSE_ORDER = "reverse_order"
-CONF_SCALE = "scale"
-
-DATA_TYPE_CUSTOM = "custom"
-DATA_TYPE_FLOAT = "float"
-DATA_TYPE_INT = "int"
-DATA_TYPE_UINT = "uint"
-
-DEFAULT_REGISTER_TYPE_HOLDING = "holding"
-DEFAULT_REGISTER_TYPE_INPUT = "input"
 
 
 def number(value: Any) -> Union[int, float]:
@@ -56,8 +59,8 @@ def number(value: Any) -> Union[int, float]:
     try:
         value = float(value)
         return value
-    except (TypeError, ValueError):
-        raise vol.Invalid(f"invalid number {value}")
+    except (TypeError, ValueError) as err:
+        raise vol.Invalid(f"invalid number {value}") from err
 
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
@@ -68,15 +71,21 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
                 vol.Required(CONF_REGISTER): cv.positive_int,
                 vol.Optional(CONF_COUNT, default=1): cv.positive_int,
                 vol.Optional(CONF_DATA_TYPE, default=DATA_TYPE_INT): vol.In(
-                    [DATA_TYPE_INT, DATA_TYPE_UINT, DATA_TYPE_FLOAT, DATA_TYPE_CUSTOM]
+                    [
+                        DATA_TYPE_INT,
+                        DATA_TYPE_UINT,
+                        DATA_TYPE_FLOAT,
+                        DATA_TYPE_STRING,
+                        DATA_TYPE_CUSTOM,
+                    ]
                 ),
                 vol.Optional(CONF_DEVICE_CLASS): DEVICE_CLASSES_SCHEMA,
                 vol.Optional(CONF_HUB, default=DEFAULT_HUB): cv.string,
                 vol.Optional(CONF_OFFSET, default=0): number,
                 vol.Optional(CONF_PRECISION, default=0): cv.positive_int,
                 vol.Optional(
-                    CONF_REGISTER_TYPE, default=DEFAULT_REGISTER_TYPE_HOLDING
-                ): vol.In([DEFAULT_REGISTER_TYPE_HOLDING, DEFAULT_REGISTER_TYPE_INPUT]),
+                    CONF_REGISTER_TYPE, default=CALL_TYPE_REGISTER_HOLDING
+                ): vol.In([CALL_TYPE_REGISTER_HOLDING, CALL_TYPE_REGISTER_INPUT]),
                 vol.Optional(CONF_REVERSE_ORDER, default=False): cv.boolean,
                 vol.Optional(CONF_SCALE, default=1): number,
                 vol.Optional(CONF_SLAVE): cv.positive_int,
@@ -91,17 +100,13 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
 def setup_platform(hass, config, add_entities, discovery_info=None):
     """Set up the Modbus sensors."""
     sensors = []
-    data_types = {DATA_TYPE_INT: {1: "h", 2: "i", 4: "q"}}
-    data_types[DATA_TYPE_UINT] = {1: "H", 2: "I", 4: "Q"}
-    data_types[DATA_TYPE_FLOAT] = {1: "e", 2: "f", 4: "d"}
 
     for register in config[CONF_REGISTERS]:
-        structure = ">i"
-        if register[CONF_DATA_TYPE] != DATA_TYPE_CUSTOM:
+        if register[CONF_DATA_TYPE] == DATA_TYPE_STRING:
+            structure = str(register[CONF_COUNT] * 2) + "s"
+        elif register[CONF_DATA_TYPE] != DATA_TYPE_CUSTOM:
             try:
-                structure = ">{}".format(
-                    data_types[register[CONF_DATA_TYPE]][register[CONF_COUNT]]
-                )
+                structure = f">{DEFAULT_STRUCT_FORMAT[register[CONF_DATA_TYPE]][register[CONF_COUNT]]}"
             except KeyError:
                 _LOGGER.error(
                     "Unable to detect data type for %s sensor, try a custom type",
@@ -141,6 +146,7 @@ def setup_platform(hass, config, add_entities, discovery_info=None):
                 register[CONF_OFFSET],
                 structure,
                 register[CONF_PRECISION],
+                register[CONF_DATA_TYPE],
                 register.get(CONF_DEVICE_CLASS),
             )
         )
@@ -167,6 +173,7 @@ class ModbusRegisterSensor(RestoreEntity):
         offset,
         structure,
         precision,
+        data_type,
         device_class,
     ):
         """Initialize the modbus register sensor."""
@@ -182,6 +189,7 @@ class ModbusRegisterSensor(RestoreEntity):
         self._offset = offset
         self._precision = precision
         self._structure = structure
+        self._data_type = data_type
         self._device_class = device_class
         self._value = None
         self._available = True
@@ -221,7 +229,7 @@ class ModbusRegisterSensor(RestoreEntity):
     def update(self):
         """Update the state of the sensor."""
         try:
-            if self._register_type == DEFAULT_REGISTER_TYPE_INPUT:
+            if self._register_type == CALL_TYPE_REGISTER_INPUT:
                 result = self._hub.read_input_registers(
                     self._slave, self._register, self._count
                 )
@@ -230,11 +238,11 @@ class ModbusRegisterSensor(RestoreEntity):
                     self._slave, self._register, self._count
                 )
         except ConnectionException:
-            self._set_unavailable()
+            self._available = False
             return
 
         if isinstance(result, (ModbusException, ExceptionResponse)):
-            self._set_unavailable()
+            self._available = False
             return
 
         registers = result.registers
@@ -242,26 +250,16 @@ class ModbusRegisterSensor(RestoreEntity):
             registers.reverse()
 
         byte_string = b"".join([x.to_bytes(2, byteorder="big") for x in registers])
-        val = struct.unpack(self._structure, byte_string)[0]
-        val = self._scale * val + self._offset
-        if isinstance(val, int):
-            self._value = str(val)
-            if self._precision > 0:
-                self._value += "." + "0" * self._precision
+        if self._data_type != DATA_TYPE_STRING:
+            val = struct.unpack(self._structure, byte_string)[0]
+            val = self._scale * val + self._offset
+            if isinstance(val, int):
+                self._value = str(val)
+                if self._precision > 0:
+                    self._value += "." + "0" * self._precision
+            else:
+                self._value = f"{val:.{self._precision}f}"
         else:
-            self._value = f"{val:.{self._precision}f}"
+            self._value = byte_string.decode()
 
         self._available = True
-
-    def _set_unavailable(self):
-        """Set unavailable state and log it as an error."""
-        if not self._available:
-            return
-
-        _LOGGER.error(
-            "No response from hub %s, slave %s, address %s",
-            self._hub.name,
-            self._slave,
-            self._register,
-        )
-        self._available = False

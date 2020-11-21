@@ -11,10 +11,14 @@ from homeassistant.const import (
     CONF_SOURCE,
     STATE_UNAVAILABLE,
     STATE_UNKNOWN,
+    TIME_DAYS,
+    TIME_HOURS,
+    TIME_MINUTES,
+    TIME_SECONDS,
 )
 from homeassistant.core import callback
 import homeassistant.helpers.config_validation as cv
-from homeassistant.helpers.event import async_track_state_change
+from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.restore_state import RestoreEntity
 
 # mypy: allow-untyped-defs, no-check-untyped-defs
@@ -42,7 +46,12 @@ UNIT_PREFIXES = {
 }
 
 # SI Time prefixes
-UNIT_TIME = {"s": 1, "min": 60, "h": 60 * 60, "d": 24 * 60 * 60}
+UNIT_TIME = {
+    TIME_SECONDS: 1,
+    TIME_MINUTES: 60,
+    TIME_HOURS: 60 * 60,
+    TIME_DAYS: 24 * 60 * 60,
+}
 
 ICON = "mdi:chart-line"
 
@@ -55,7 +64,7 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
         vol.Required(CONF_SOURCE): cv.entity_id,
         vol.Optional(CONF_ROUND_DIGITS, default=DEFAULT_ROUND): vol.Coerce(int),
         vol.Optional(CONF_UNIT_PREFIX, default=None): vol.In(UNIT_PREFIXES),
-        vol.Optional(CONF_UNIT_TIME, default="h"): vol.In(UNIT_TIME),
+        vol.Optional(CONF_UNIT_TIME, default=TIME_HOURS): vol.In(UNIT_TIME),
         vol.Optional(CONF_UNIT): cv.string,
         vol.Optional(CONF_TIME_WINDOW, default=DEFAULT_TIME_WINDOW): cv.time_period,
     }
@@ -121,8 +130,10 @@ class DerivativeSensor(RestoreEntity):
                 _LOGGER.warning("Could not restore last state: %s", err)
 
         @callback
-        def calc_derivative(entity, old_state, new_state):
+        def calc_derivative(event):
             """Handle the sensor state changes."""
+            old_state = event.data.get("old_state")
+            new_state = event.data.get("new_state")
             if (
                 old_state is None
                 or old_state.state in [STATE_UNKNOWN, STATE_UNAVAILABLE]
@@ -173,9 +184,11 @@ class DerivativeSensor(RestoreEntity):
                 _LOGGER.error("Could not calculate derivative: %s", err)
             else:
                 self._state = derivative
-                self.async_schedule_update_ha_state()
+                self.async_write_ha_state()
 
-        async_track_state_change(self.hass, self._sensor_source_id, calc_derivative)
+        async_track_state_change_event(
+            self.hass, [self._sensor_source_id], calc_derivative
+        )
 
     @property
     def name(self):
@@ -200,8 +213,7 @@ class DerivativeSensor(RestoreEntity):
     @property
     def device_state_attributes(self):
         """Return the state attributes of the sensor."""
-        state_attr = {ATTR_SOURCE_ID: self._sensor_source_id}
-        return state_attr
+        return {ATTR_SOURCE_ID: self._sensor_source_id}
 
     @property
     def icon(self):

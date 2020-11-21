@@ -10,12 +10,7 @@ import zigpy.zcl.foundation as zcl_f
 from homeassistant.components.lock import DOMAIN
 from homeassistant.const import STATE_LOCKED, STATE_UNAVAILABLE, STATE_UNLOCKED
 
-from .common import (
-    async_enable_traffic,
-    find_entity_id,
-    make_attribute,
-    make_zcl_header,
-)
+from .common import async_enable_traffic, find_entity_id, send_attributes_report
 
 from tests.common import mock_coro
 
@@ -48,6 +43,8 @@ async def test_lock(hass, lock):
     entity_id = await find_entity_id(DOMAIN, zha_device, hass)
     assert entity_id is not None
 
+    assert hass.states.get(entity_id).state == STATE_UNLOCKED
+    await async_enable_traffic(hass, [zha_device], enabled=False)
     # test that the lock was created and that it is unavailable
     assert hass.states.get(entity_id).state == STATE_UNAVAILABLE
 
@@ -58,16 +55,11 @@ async def test_lock(hass, lock):
     assert hass.states.get(entity_id).state == STATE_UNLOCKED
 
     # set state to locked
-    attr = make_attribute(0, 1)
-    hdr = make_zcl_header(zcl_f.Command.Report_Attributes)
-    cluster.handle_message(hdr, [[attr]])
-    await hass.async_block_till_done()
+    await send_attributes_report(hass, cluster, {1: 0, 0: 1, 2: 2})
     assert hass.states.get(entity_id).state == STATE_LOCKED
 
     # set state to unlocked
-    attr.value.value = 2
-    cluster.handle_message(hdr, [[attr]])
-    await hass.async_block_till_done()
+    await send_attributes_report(hass, cluster, {1: 0, 0: 2, 2: 3})
     assert hass.states.get(entity_id).state == STATE_UNLOCKED
 
     # lock from HA

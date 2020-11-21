@@ -7,11 +7,13 @@ from homeassistant.components.NEW_DOMAIN.const import (
 )
 from homeassistant.helpers import config_entry_oauth2_flow
 
+from tests.async_mock import patch
+
 CLIENT_ID = "1234"
 CLIENT_SECRET = "5678"
 
 
-async def test_full_flow(hass, aiohttp_client, aioclient_mock):
+async def test_full_flow(hass, aiohttp_client, aioclient_mock, current_request):
     """Check full flow."""
     assert await setup.async_setup_component(
         hass,
@@ -48,6 +50,10 @@ async def test_full_flow(hass, aiohttp_client, aioclient_mock):
         },
     )
 
-    result = await hass.config_entries.flow.async_configure(result["flow_id"])
+    with patch(
+        "homeassistant.components.NEW_DOMAIN.async_setup_entry", return_value=True
+    ) as mock_setup:
+        await hass.config_entries.flow.async_configure(result["flow_id"])
 
     assert len(hass.config_entries.async_entries(DOMAIN)) == 1
+    assert len(mock_setup.mock_calls) == 1

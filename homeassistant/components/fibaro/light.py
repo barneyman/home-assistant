@@ -1,24 +1,21 @@
 """Support for Fibaro lights."""
 import asyncio
 from functools import partial
-import logging
 
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
     ATTR_HS_COLOR,
     ATTR_WHITE_VALUE,
-    ENTITY_ID_FORMAT,
+    DOMAIN,
     SUPPORT_BRIGHTNESS,
     SUPPORT_COLOR,
     SUPPORT_WHITE_VALUE,
-    Light,
+    LightEntity,
 )
 from homeassistant.const import CONF_WHITE_VALUE
 import homeassistant.util.color as color_util
 
 from . import CONF_COLOR, CONF_DIMMING, CONF_RESET_COLOR, FIBARO_DEVICES, FibaroDevice
-
-_LOGGER = logging.getLogger(__name__)
 
 
 def scaleto255(value):
@@ -48,7 +45,7 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
     )
 
 
-class FibaroLight(FibaroDevice, Light):
+class FibaroLight(FibaroDevice, LightEntity):
     """Representation of a Fibaro Light, including dimmable."""
 
     def __init__(self, fibaro_device):
@@ -77,7 +74,7 @@ class FibaroLight(FibaroDevice, Light):
             self._supported_flags |= SUPPORT_WHITE_VALUE
 
         super().__init__(fibaro_device)
-        self.entity_id = ENTITY_ID_FORMAT.format(self.ha_id)
+        self.entity_id = f"{DOMAIN}.{self.ha_id}"
 
     @property
     def brightness(self):

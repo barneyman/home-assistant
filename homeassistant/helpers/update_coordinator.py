@@ -3,10 +3,14 @@ import asyncio
 from datetime import datetime, timedelta
 import logging
 from time import monotonic
-from typing import Any, Awaitable, Callable, List, Optional
+from typing import Awaitable, Callable, Generic, List, Optional, TypeVar
+import urllib.error
 
-from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
-from homeassistant.helpers.event import async_track_point_in_utc_time
+import aiohttp
+import requests
+
+from homeassistant.core import CALLBACK_TYPE, HassJob, HomeAssistant, callback
+from homeassistant.helpers import entity, event
 from homeassistant.util.dt import utcnow
 
 from .debounce import Debouncer
@@ -14,12 +18,14 @@ from .debounce import Debouncer
 REQUEST_REFRESH_DEFAULT_COOLDOWN = 10
 REQUEST_REFRESH_DEFAULT_IMMEDIATE = True
 
+T = TypeVar("T")
+
 
 class UpdateFailed(Exception):
     """Raised when an update has failed."""
 
 
-class DataUpdateCoordinator:
+class DataUpdateCoordinator(Generic[T]):
     """Class to manage fetching data from single endpoint."""
 
     def __init__(
@@ -28,8 +34,8 @@ class DataUpdateCoordinator:
         logger: logging.Logger,
         *,
         name: str,
-        update_method: Callable[[], Awaitable],
-        update_interval: timedelta,
+        update_interval: Optional[timedelta] = None,
+        update_method: Optional[Callable[[], Awaitable[T]]] = None,
         request_refresh_debouncer: Optional[Debouncer] = None,
     ):
         """Initialize global data updater."""
@@ -39,9 +45,10 @@ class DataUpdateCoordinator:
         self.update_method = update_method
         self.update_interval = update_interval
 
-        self.data: Optional[Any] = None
+        self.data: Optional[T] = None
 
         self._listeners: List[CALLBACK_TYPE] = []
+        self._job = HassJob(self._handle_refresh_interval)
         self._unsub_refresh: Optional[CALLBACK_TYPE] = None
         self._request_refresh_task: Optional[asyncio.TimerHandle] = None
         self.last_update_success = True
@@ -60,7 +67,7 @@ class DataUpdateCoordinator:
         self._debounced_refresh = request_refresh_debouncer
 
     @callback
-    def async_add_listener(self, update_callback: CALLBACK_TYPE) -> None:
+    def async_add_listener(self, update_callback: CALLBACK_TYPE) -> Callable[[], None]:
         """Listen for data updates."""
         schedule_refresh = not self._listeners
 
@@ -69,6 +76,13 @@ class DataUpdateCoordinator:
         # This is the first listener, set up interval.
         if schedule_refresh:
             self._schedule_refresh()
+
+        @callback
+        def remove_listener() -> None:
+            """Remove update listener."""
+            self.async_remove_listener(update_callback)
+
+        return remove_listener
 
     @callback
     def async_remove_listener(self, update_callback: CALLBACK_TYPE) -> None:
@@ -82,12 +96,21 @@ class DataUpdateCoordinator:
     @callback
     def _schedule_refresh(self) -> None:
         """Schedule a refresh."""
+        if self.update_interval is None:
+            return
+
         if self._unsub_refresh:
             self._unsub_refresh()
             self._unsub_refresh = None
 
-        self._unsub_refresh = async_track_point_in_utc_time(
-            self.hass, self._handle_refresh_interval, utcnow() + self.update_interval
+        # We _floor_ utcnow to create a schedule on a rounded second,
+        # minimizing the time between the point and the real activation.
+        # That way we obtain a constant update frequency,
+        # as long as the update process takes less than a second
+        self._unsub_refresh = event.async_track_point_in_utc_time(
+            self.hass,
+            self._job,
+            utcnow().replace(microsecond=0) + self.update_interval,
         )
 
     async def _handle_refresh_interval(self, _now: datetime) -> None:
@@ -102,22 +125,49 @@ class DataUpdateCoordinator:
         """
         await self._debounced_refresh.async_call()
 
+    async def _async_update_data(self) -> Optional[T]:
+        """Fetch the latest data from the source."""
+        if self.update_method is None:
+            raise NotImplementedError("Update method not implemented")
+        return await self.update_method()
+
     async def async_refresh(self) -> None:
-        """Update data."""
+        """Refresh data."""
         if self._unsub_refresh:
             self._unsub_refresh()
             self._unsub_refresh = None
 
         self._debounced_refresh.async_cancel()
+        start = monotonic()
 
         try:
-            start = monotonic()
-            self.data = await self.update_method()
+            self.data = await self._async_update_data()
+
+        except (asyncio.TimeoutError, requests.exceptions.Timeout):
+            if self.last_update_success:
+                self.logger.error("Timeout fetching %s data", self.name)
+                self.last_update_success = False
+
+        except (aiohttp.ClientError, requests.exceptions.RequestException) as err:
+            if self.last_update_success:
+                self.logger.error("Error requesting %s data: %s", self.name, err)
+                self.last_update_success = False
+
+        except urllib.error.URLError as err:
+            if self.last_update_success:
+                if err.reason == "timed out":
+                    self.logger.error("Timeout fetching %s data", self.name)
+                else:
+                    self.logger.error("Error requesting %s data: %s", self.name, err)
+                self.last_update_success = False
 
         except UpdateFailed as err:
             if self.last_update_success:
                 self.logger.error("Error fetching %s data: %s", self.name, err)
                 self.last_update_success = False
+
+        except NotImplementedError as err:
+            raise err
 
         except Exception as err:  # pylint: disable=broad-except
             self.last_update_success = False
@@ -136,7 +186,72 @@ class DataUpdateCoordinator:
                 self.name,
                 monotonic() - start,
             )
+            if self._listeners:
+                self._schedule_refresh()
+
+        for update_callback in self._listeners:
+            update_callback()
+
+    @callback
+    def async_set_updated_data(self, data: T) -> None:
+        """Manually update data, notify listeners and reset refresh interval."""
+        if self._unsub_refresh:
+            self._unsub_refresh()
+            self._unsub_refresh = None
+
+        self._debounced_refresh.async_cancel()
+
+        self.data = data
+        self.last_update_success = True
+        self.logger.debug(
+            "Manually updated %s data",
+            self.name,
+        )
+
+        if self._listeners:
             self._schedule_refresh()
 
         for update_callback in self._listeners:
             update_callback()
+
+
+class CoordinatorEntity(entity.Entity):
+    """A class for entities using DataUpdateCoordinator."""
+
+    def __init__(self, coordinator: DataUpdateCoordinator) -> None:
+        """Create the entity with a DataUpdateCoordinator."""
+        self.coordinator = coordinator
+
+    @property
+    def should_poll(self) -> bool:
+        """No need to poll. Coordinator notifies entity of updates."""
+        return False
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        return self.coordinator.last_update_success
+
+    async def async_added_to_hass(self) -> None:
+        """When entity is added to hass."""
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            self.coordinator.async_add_listener(self._handle_coordinator_update)
+        )
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
+    async def async_update(self) -> None:
+        """Update the entity.
+
+        Only used by the generic entity update service.
+        """
+
+        # Ignore manual update requests if the entity is disabled
+        if not self.enabled:
+            return
+
+        await self.coordinator.async_request_refresh()

@@ -202,7 +202,15 @@ class GlobalDataUpdater:
             return
         except requests.Timeout:
             _LOGGER.warning(
-                "Time out fetching Ring %s data", self.data_type,
+                "Time out fetching Ring %s data",
+                self.data_type,
+            )
+            return
+        except requests.RequestException as err:
+            _LOGGER.warning(
+                "Error fetching Ring %s data: %s",
+                self.data_type,
+                err,
             )
             return
 
@@ -288,6 +296,14 @@ class DeviceDataUpdater:
                     "Time out fetching Ring %s data for device %s",
                     self.data_type,
                     device_id,
+                )
+                continue
+            except requests.RequestException as err:
+                _LOGGER.warning(
+                    "Error fetching Ring %s data for device %s: %s",
+                    self.data_type,
+                    device_id,
+                    err,
                 )
                 continue
 

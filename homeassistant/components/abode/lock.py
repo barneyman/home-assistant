@@ -1,14 +1,10 @@
 """Support for the Abode Security System locks."""
-import logging
-
 import abodepy.helpers.constants as CONST
 
-from homeassistant.components.lock import LockDevice
+from homeassistant.components.lock import LockEntity
 
 from . import AbodeDevice
 from .const import DOMAIN
-
-_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
@@ -23,7 +19,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     async_add_entities(entities)
 
 
-class AbodeLock(AbodeDevice, LockDevice):
+class AbodeLock(AbodeDevice, LockEntity):
     """Representation of an Abode lock."""
 
     def lock(self, **kwargs):

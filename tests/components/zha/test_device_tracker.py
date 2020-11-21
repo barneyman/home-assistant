@@ -4,7 +4,6 @@ import time
 
 import pytest
 import zigpy.zcl.clusters.general as general
-import zigpy.zcl.foundation as zcl_f
 
 from homeassistant.components.device_tracker import DOMAIN, SOURCE_TYPE_ROUTER
 from homeassistant.components.zha.core.registries import (
@@ -17,8 +16,7 @@ from .common import (
     async_enable_traffic,
     async_test_rejoin,
     find_entity_id,
-    make_attribute,
-    make_zcl_header,
+    send_attributes_report,
 )
 
 from tests.common import async_fire_time_changed
@@ -51,6 +49,8 @@ async def test_device_tracker(hass, zha_device_joined_restored, zigpy_device_dt)
     entity_id = await find_entity_id(DOMAIN, zha_device, hass)
     assert entity_id is not None
 
+    assert hass.states.get(entity_id).state == STATE_HOME
+    await async_enable_traffic(hass, [zha_device], enabled=False)
     # test that the device tracker was created and that it is unavailable
     assert hass.states.get(entity_id).state == STATE_UNAVAILABLE
 
@@ -66,12 +66,9 @@ async def test_device_tracker(hass, zha_device_joined_restored, zigpy_device_dt)
     assert hass.states.get(entity_id).state == STATE_NOT_HOME
 
     # turn state flip
-    attr = make_attribute(0x0020, 23)
-    hdr = make_zcl_header(zcl_f.Command.Report_Attributes)
-    cluster.handle_message(hdr, [[attr]])
-
-    attr = make_attribute(0x0021, 200)
-    cluster.handle_message(hdr, [[attr]])
+    await send_attributes_report(
+        hass, cluster, {0x0000: 0, 0x0020: 23, 0x0021: 200, 0x0001: 2}
+    )
 
     zigpy_device_dt.last_seen = time.time() + 10
     next_update = dt_util.utcnow() + timedelta(seconds=30)

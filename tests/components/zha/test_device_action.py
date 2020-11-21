@@ -2,6 +2,7 @@
 from unittest.mock import patch
 
 import pytest
+import zigpy.profiles.zha
 import zigpy.zcl.clusters.general as general
 import zigpy.zcl.clusters.security as security
 import zigpy.zcl.foundation as zcl_f
@@ -11,7 +12,6 @@ from homeassistant.components.device_automation import (
     _async_get_device_automations as async_get_device_automations,
 )
 from homeassistant.components.zha import DOMAIN
-from homeassistant.components.zha.core.const import CHANNEL_EVENT_RELAY
 from homeassistant.helpers.device_registry import async_get_registry
 from homeassistant.setup import async_setup_component
 
@@ -32,7 +32,7 @@ async def device_ias(hass, zigpy_device_mock, zha_device_joined_restored):
             1: {
                 "in_clusters": [c.cluster_id for c in clusters],
                 "out_clusters": [general.OnOff.cluster_id],
-                "device_type": 0,
+                "device_type": zigpy.profiles.zha.DeviceType.ON_OFF_SWITCH,
             }
         },
     )
@@ -104,8 +104,8 @@ async def test_action(hass, device_ias):
         await hass.async_block_till_done()
         calls = async_mock_service(hass, DOMAIN, "warning_device_warn")
 
-        channel = {ch.name: ch for ch in zha_device.all_channels}[CHANNEL_EVENT_RELAY]
-        channel.zha_send_event(channel.cluster, COMMAND_SINGLE, [])
+        channel = zha_device.channels.pools[0].client_channels["1:0x0006"]
+        channel.zha_send_event(COMMAND_SINGLE, [])
         await hass.async_block_till_done()
 
         assert len(calls) == 1

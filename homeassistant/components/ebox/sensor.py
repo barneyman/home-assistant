@@ -2,9 +2,6 @@
 Support for EBox.
 
 Get data from 'My Usage Page' page: https://client.ebox.ca/myusage
-
-For more details about this platform, please refer to the documentation at
-https://home-assistant.io/components/sensor.ebox/
 """
 from datetime import timedelta
 import logging
@@ -20,6 +17,8 @@ from homeassistant.const import (
     CONF_PASSWORD,
     CONF_USERNAME,
     DATA_GIGABITS,
+    PERCENTAGE,
+    TIME_DAYS,
 )
 from homeassistant.exceptions import PlatformNotReady
 import homeassistant.helpers.config_validation as cv
@@ -29,8 +28,6 @@ from homeassistant.util import Throttle
 _LOGGER = logging.getLogger(__name__)
 
 PRICE = "CAD"
-DAYS = "days"
-PERCENT = "%"
 
 DEFAULT_NAME = "EBox"
 
@@ -39,10 +36,10 @@ SCAN_INTERVAL = timedelta(minutes=15)
 MIN_TIME_BETWEEN_UPDATES = timedelta(minutes=15)
 
 SENSOR_TYPES = {
-    "usage": ["Usage", PERCENT, "mdi:percent"],
-    "balance": ["Balance", PRICE, "mdi:square-inc-cash"],
+    "usage": ["Usage", PERCENTAGE, "mdi:percent"],
+    "balance": ["Balance", PRICE, "mdi:cash-usd"],
     "limit": ["Data limit", DATA_GIGABITS, "mdi:download"],
-    "days_left": ["Days left", DAYS, "mdi:calendar-today"],
+    "days_left": ["Days left", TIME_DAYS, "mdi:calendar-today"],
     "before_offpeak_download": [
         "Download before offpeak",
         DATA_GIGABITS,
@@ -84,7 +81,7 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
         await ebox_data.async_update()
     except PyEboxError as exp:
         _LOGGER.error("Failed login: %s", exp)
-        raise PlatformNotReady
+        raise PlatformNotReady from exp
 
     sensors = []
     for variable in config[CONF_MONITORED_VARIABLES]:

@@ -1,6 +1,5 @@
 """The iCloud component."""
 import asyncio
-import logging
 
 import voluptuous as vol
 
@@ -14,8 +13,10 @@ from .account import IcloudAccount
 from .const import (
     CONF_GPS_ACCURACY_THRESHOLD,
     CONF_MAX_INTERVAL,
+    CONF_WITH_FAMILY,
     DEFAULT_GPS_ACCURACY_THRESHOLD,
     DEFAULT_MAX_INTERVAL,
+    DEFAULT_WITH_FAMILY,
     DOMAIN,
     PLATFORMS,
     STORAGE_KEY,
@@ -71,6 +72,7 @@ ACCOUNT_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_USERNAME): cv.string,
         vol.Required(CONF_PASSWORD): cv.string,
+        vol.Optional(CONF_WITH_FAMILY, default=DEFAULT_WITH_FAMILY): cv.boolean,
         vol.Optional(CONF_MAX_INTERVAL, default=DEFAULT_MAX_INTERVAL): cv.positive_int,
         vol.Optional(
             CONF_GPS_ACCURACY_THRESHOLD, default=DEFAULT_GPS_ACCURACY_THRESHOLD
@@ -82,8 +84,6 @@ CONFIG_SCHEMA = vol.Schema(
     {DOMAIN: vol.Schema(vol.All(cv.ensure_list, [ACCOUNT_SCHEMA]))},
     extra=vol.ALLOW_EXTRA,
 )
-
-_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup(hass: HomeAssistantType, config: ConfigType) -> bool:
@@ -110,6 +110,7 @@ async def async_setup_entry(hass: HomeAssistantType, entry: ConfigEntry) -> bool
 
     username = entry.data[CONF_USERNAME]
     password = entry.data[CONF_PASSWORD]
+    with_family = entry.data[CONF_WITH_FAMILY]
     max_interval = entry.data[CONF_MAX_INTERVAL]
     gps_accuracy_threshold = entry.data[CONF_GPS_ACCURACY_THRESHOLD]
 
@@ -120,13 +121,18 @@ async def async_setup_entry(hass: HomeAssistantType, entry: ConfigEntry) -> bool
     icloud_dir = hass.helpers.storage.Store(STORAGE_VERSION, STORAGE_KEY)
 
     account = IcloudAccount(
-        hass, username, password, icloud_dir, max_interval, gps_accuracy_threshold,
+        hass,
+        username,
+        password,
+        icloud_dir,
+        with_family,
+        max_interval,
+        gps_accuracy_threshold,
+        entry,
     )
     await hass.async_add_executor_job(account.setup)
-    if not account.devices:
-        return False
 
-    hass.data[DOMAIN][username] = account
+    hass.data[DOMAIN][entry.unique_id] = account
 
     for platform in PLATFORMS:
         hass.async_create_task(
@@ -178,10 +184,10 @@ async def async_setup_entry(hass: HomeAssistantType, entry: ConfigEntry) -> bool
         if account_identifier is None:
             return None
 
-        icloud_account = hass.data[DOMAIN].get(account_identifier, None)
+        icloud_account = hass.data[DOMAIN].get(account_identifier)
         if icloud_account is None:
             for account in hass.data[DOMAIN].values():
-                if account.name == account_identifier:
+                if account.username == account_identifier:
                     icloud_account = account
 
         if icloud_account is None:
